@@ -10,7 +10,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__)))
 from interface_sonar_api import set_speed, set_acoustics
 from sonar_3d_15_protocol_pb2 import RangeImage, BitmapImageGreyscale8
 from inspect_sonar_data import handle_packet
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, PointCloud2, PointField
+from sensor_msgs_py import point_cloud2
+from std_msgs.msg import Header
 import numpy as np
 try:
     from rcl_interfaces.msg import SetParametersResult
@@ -68,6 +70,7 @@ class Sonar3D15Node(Node):
 
         self.image_pub = self.create_publisher(Image, 'sonar/depth_image', 10)
         self.intensity_pub = self.create_publisher(Image, 'sonar/intensity_image', 10)
+        self.pointcloud_pub = self.create_publisher(PointCloud2, 'sonar/point_cloud', 10)
 
     def configure_sonar(self):
         if self.sonar_ip:
@@ -110,6 +113,24 @@ class Sonar3D15Node(Node):
                 self.filter_ip = param.value
         return SetParametersResult(successful=success)
 
+    def pack_cloud(self, frame, voxels):
+        voxels_list = []
+        for voxel in voxels:
+            voxels_list.append([voxel["x"],voxel["y"],voxel["z"]])
+
+        cloud = np.array(voxels_list).reshape(-1, 3)  
+        sonar_cloud = PointCloud2()
+        header = Header()
+        header.stamp = self.get_clock().now().to_msg()
+        header.frame_id = frame
+        fields = [PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+                PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+                PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1)]
+
+        sonar_cloud = point_cloud2.create_cloud(header, fields, cloud)
+
+        return sonar_cloud
+
     def udp_listener(self):
         multicast_group = self.multicast_group
         port = self.multicast_port
@@ -120,7 +141,7 @@ class Sonar3D15Node(Node):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(('', port))
             group = socket.inet_aton(multicast_group)
-            mreq = struct.pack('4sL', group, socket.INADDR_ANY)
+            mreq = struct.pack('4s4s', group, socket.inet_aton('192.168.32.33'))
             sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
             self.get_logger().info(f"Listening for Sonar 3D-15 UDP packets on {multicast_group}:{port}...")
             if filter_ip:
@@ -131,11 +152,13 @@ class Sonar3D15Node(Node):
                     continue
                 self.get_logger().debug(f"Received {len(data)} bytes from {addr}")
                 try:
+                    print("000000000000000")
                     result = handle_packet(data)
                     if result is None:
                         continue
-                    msg_type, msg_obj = result
+                    msg_type, msg_obj, voxels = result
                     if msg_type == "RangeImage":
+                        print(msg_type)
                         # Convert to numpy array (float32)
                         img_np = np.array(msg_obj.image_pixel_data, dtype=np.float32).reshape((msg_obj.height, msg_obj.width))
                         msg = Image()
@@ -148,9 +171,22 @@ class Sonar3D15Node(Node):
                         msg.step = img_np.strides[0]
                         msg.data = img_np.tobytes()
                         self.image_pub.publish(msg)
+
+                        # Publish point cloud
+                        sonar_cloud = self.pack_cloud("sonar", voxels)
+                        self.pointcloud_pub.publish(sonar_cloud)
+
                     elif msg_type == "BitmapImageGreyscale8":
+                        print(msg_type)
                         # Intensity image as 8UC1
-                        img_np = np.array(msg_obj.image_pixel_data, dtype=np.uint8).reshape((msg_obj.height, msg_obj.width))
+                        img_list = [] 
+                        for y in range(0, msg_obj.height, 1): 
+                            for x in range(msg_obj.width):
+                                pixel_value = msg_obj.image_pixel_data[y * msg_obj.width + x]
+                                # f.write(f"{pixel_value} ".encode())
+                                img_list.append(pixel_value)
+                        img_np = np.array(img_list, dtype=np.uint8).reshape((msg_obj.height, msg_obj.width))
+                        
                         msg = Image()
                         msg.header.stamp = self.get_clock().now().to_msg()
                         msg.header.frame_id = "sonar"

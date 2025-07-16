@@ -145,6 +145,7 @@ def rangeImageToXYZ(ri):
             }
 
             voxels.append(voxel)
+            
     return voxels
 
 
@@ -213,7 +214,8 @@ def handle_packet(data: bytes, save: bool = False, save_path: str = ""):
             filename = f"sonar_image_{seq_id}.pgm"
             file_path = os.path.join(save_path, filename)
             saveImage(msg_obj, file_path)
-        return (msg_type, msg_obj)
+        return (msg_type, msg_obj, None)
+    
     elif msg_type == "RangeImage":
         # Print out main fields
         print("  RangeImage data:")
@@ -236,6 +238,10 @@ def handle_packet(data: bytes, save: bool = False, save_path: str = ""):
             filename = f"sonar_voxels_{seq_id}.xyz"
             file_path = os.path.join(save_path, filename)
             saveXYZ(voxels, file_path)
+        return (msg_type, msg_obj, voxels)
+    
+    elif msg_type == "ImuOrientation":
+        print("  Imu Orientation:")
 
     else:
         # We don't have a custom handler for other message types
