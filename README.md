@@ -1,4 +1,4 @@
-# ROS2 Integration for Water Linked 3D Sonar Driver
+# ROS2 driver for the Water Linked 3D Sonar Driver
 
 This section describes the ROS2 package for the Water Linked Sonar 3D-15.
 
