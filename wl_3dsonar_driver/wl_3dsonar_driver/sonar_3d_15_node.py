@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-import rclpy
-from rclpy.node import Node
 import threading
 import socket
 import struct
 import os
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__)))
-from interface_sonar_api import set_speed, set_acoustics
-from sonar_3d_15_protocol_pb2 import RangeImage, BitmapImageGreyscale8
-from inspect_sonar_data import handle_packet
+import numpy as np
+
+# sys.path.append(os.path.join(os.path.dirname(__file__)))
+# from wl_api.sonar_3d_15_protocol_pb2 import RangeImage, BitmapImageGreyscale8
+from wl_api.interface_sonar_api import set_speed, set_acoustics
+from wl_api.inspect_sonar_data import handle_packet
+
+import rclpy
+from rclpy.node import Node
 from sensor_msgs.msg import Image, PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
-import numpy as np
+
 try:
     from rcl_interfaces.msg import SetParametersResult
 except ImportError:
@@ -22,19 +25,19 @@ except ImportError:
         def __init__(self, successful=True):
             self.successful = successful
 
-# Helper to parse RIP1 framing and extract RangeImage protobuf
-def parse_rip1_range_image(data):
-    if len(data) < 12:
-        raise ValueError("Packet too short for RIP1 framing")
-    magic, length, msg_type = struct.unpack('<4sII', data[:12])
-    if magic != b'RIP1':
-        raise ValueError("Invalid RIP1 magic")
-    if msg_type != 1:  # 1 = RangeImage
-        raise ValueError("Not a RangeImage message")
-    pb_data = data[12:12+length]
-    range_image = RangeImage()
-    range_image.ParseFromString(pb_data)
-    return range_image
+# # Helper to parse RIP1 framing and extract RangeImage protobuf
+# def parse_rip1_range_image(data):
+#     if len(data) < 12:
+#         raise ValueError("Packet too short for RIP1 framing")
+#     magic, length, msg_type = struct.unpack('<4sII', data[:12])
+#     if magic != b'RIP1':
+#         raise ValueError("Invalid RIP1 magic")
+#     if msg_type != 1:  # 1 = RangeImage
+#         raise ValueError("Not a RangeImage message")
+#     pb_data = data[12:12+length]
+#     range_image = RangeImage()
+#     range_image.ParseFromString(pb_data)
+#     return range_image
 
 class Sonar3D15Node(Node):
     def __init__(self):
