@@ -1,6 +1,8 @@
 # ROS2 driver for the Water Linked 3D Sonar Driver
 
-This section describes the ROS2 package for the Water Linked Sonar 3D-15.
+![](/media/sonar_rov.gif)
+
+
 
 ## Build Instructions
 From the root of this repository, get the original WL API as a submodule
