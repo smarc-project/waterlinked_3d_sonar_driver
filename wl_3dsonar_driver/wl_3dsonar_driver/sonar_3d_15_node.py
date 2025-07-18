@@ -164,26 +164,28 @@ class Sonar3D15Node(Node):
                         print(msg_type)
                         # Convert to numpy array (float32)
                         img_np = np.array(msg_obj.image_pixel_data, dtype=np.float32).reshape((msg_obj.height, msg_obj.width))
+                        img = np.flip(img_np, 0)
+
                         msg = Image()
                         msg.header.stamp = self.get_clock().now().to_msg()
-                        msg.header.frame_id = "sonar"
+                        msg.header.frame_id = "sonar/base_link"
                         msg.height = msg_obj.height
                         msg.width = msg_obj.width
                         msg.encoding = "32FC1"
                         msg.is_bigendian = False
-                        msg.step = img_np.strides[0]
-                        msg.data = img_np.tobytes()
+                        msg.step = img.strides[1]
+                        msg.data = img.tobytes()
                         self.image_pub.publish(msg)
 
                         # Publish point cloud
-                        sonar_cloud = self.pack_cloud("sonar", voxels)
+                        sonar_cloud = self.pack_cloud("sonar/base_link", voxels)
                         self.pointcloud_pub.publish(sonar_cloud)
 
                     elif msg_type == "BitmapImageGreyscale8":
                         print(msg_type)
                         # Intensity image as 8UC1
                         img_list = [] 
-                        for y in range(0, msg_obj.height, 1): 
+                        for y in range(msg_obj.height-1, -1, -1): 
                             for x in range(msg_obj.width):
                                 pixel_value = msg_obj.image_pixel_data[y * msg_obj.width + x]
                                 # f.write(f"{pixel_value} ".encode())
@@ -192,7 +194,7 @@ class Sonar3D15Node(Node):
                         
                         msg = Image()
                         msg.header.stamp = self.get_clock().now().to_msg()
-                        msg.header.frame_id = "sonar"
+                        msg.header.frame_id = "sonar/base_link"
                         msg.height = msg_obj.height
                         msg.width = msg_obj.width
                         msg.encoding = "8UC1"
