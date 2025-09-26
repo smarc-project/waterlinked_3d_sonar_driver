@@ -61,15 +61,34 @@ class Sonar3D15Node(Node):
         self.multicast_port = self.get_parameter('multicast_port').get_parameter_value().integer_value
         self.filter_ip = self.get_parameter('filter_ip').get_parameter_value().string_value
 
+        MULTICAST_GROUP = '224.0.0.5' # Used when everything is in brovnet
+        # MULTICAST_GROUP = '224.0.0.96'  # Used when the sonar is connected to supernet and the laptop as well over wifi 
+        
         # Register parameter change callback
         self.add_on_set_parameters_callback(self.parameter_callback)
 
         # Initial configuration
         self.configure_sonar()
 
+        multicast_group = self.multicast_group
+        port = self.multicast_port
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(('', port))
+        group = socket.inet_aton(multicast_group)
+        mreq = struct.pack('4sL', group, socket.INADDR_ANY) 
+        # mreq = struct.pack('4s4s', group, socket.inet_aton('192.168.32.33'))
+        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        self.get_logger().info(f"Listening for Sonar 3D-15 UDP packets on {multicast_group}:{port}...")
+
+        if self.filter_ip:
+            self.get_logger().info(f"Filtering packets from IP: {self.filter_ip}")
+
         # Start UDP listening thread
-        self.udp_thread = threading.Thread(target=self.udp_listener, daemon=True)
-        self.udp_thread.start()
+        sample_time = 0.001          # sample time in seconds
+        self.create_timer(sample_time, self.udp_listener)
+        # self.udp_thread = threading.Thread(target=self.udp_listener, daemon=True)
+        # self.udp_thread.start()
 
         self.image_pub = self.create_publisher(Image, 'sonar/depth_image', 10)
         self.intensity_pub = self.create_publisher(Image, 'sonar/intensity_image', 10)
@@ -135,75 +154,63 @@ class Sonar3D15Node(Node):
         return sonar_cloud
 
     def udp_listener(self):
-        multicast_group = self.multicast_group
-        port = self.multicast_port
-        filter_ip = self.filter_ip
         buffer_size = 65535
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(('', port))
-            group = socket.inet_aton(multicast_group)
-            mreq = struct.pack('4s4s', group, socket.inet_aton('192.168.32.33'))
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-            self.get_logger().info(f"Listening for Sonar 3D-15 UDP packets on {multicast_group}:{port}...")
-            if filter_ip:
-                self.get_logger().info(f"Filtering packets from IP: {filter_ip}")
-            while rclpy.ok():
-                data, addr = sock.recvfrom(buffer_size)
-                if filter_ip and addr[0] != filter_ip:
-                    continue
-                self.get_logger().debug(f"Received {len(data)} bytes from {addr}")
-                try:
-                    print("000000000000000")
-                    result = handle_packet(data)
-                    if result is None:
-                        continue
-                    msg_type, msg_obj, voxels = result
-                    if msg_type == "RangeImage":
-                        print(msg_type)
-                        # Convert to numpy array (float32)
-                        img_np = np.array(msg_obj.image_pixel_data, dtype=np.float32).reshape((msg_obj.height, msg_obj.width))
-                        img = np.flip(img_np, 0)
+        try:     
+            # while rclpy.ok():
+            data, addr = self.sock.recvfrom(buffer_size)
+            if self.filter_ip and addr[0] != self.filter_ip:
+                return
+            self.get_logger().debug(f"Received {len(data)} bytes from {addr}")
+            try:
+                print("000000000000000")
+                result = handle_packet(data)
+                if result is None:
+                    return
+                msg_type, msg_obj, voxels = result
+                if msg_type == "RangeImage":
+                    print(msg_type)
+                    # Convert to numpy array (float32)
+                    img_np = np.array(msg_obj.image_pixel_data, dtype=np.float32).reshape((msg_obj.height, msg_obj.width))
+                    img = np.flip(img_np, 0)
 
-                        msg = Image()
-                        msg.header.stamp = self.get_clock().now().to_msg()
-                        msg.header.frame_id = "sonar/base_link"
-                        msg.height = msg_obj.height
-                        msg.width = msg_obj.width
-                        msg.encoding = "32FC1"
-                        msg.is_bigendian = False
-                        msg.step = img.strides[1]
-                        msg.data = img.tobytes()
-                        self.image_pub.publish(msg)
+                    msg = Image()
+                    msg.header.stamp = self.get_clock().now().to_msg()
+                    msg.header.frame_id = "saabmarine/sonar_link"
+                    msg.height = msg_obj.height
+                    msg.width = msg_obj.width
+                    msg.encoding = "32FC1"
+                    msg.is_bigendian = False
+                    msg.step = img.strides[1]
+                    msg.data = img.tobytes()
+                    self.image_pub.publish(msg)
 
-                        # Publish point cloud
-                        sonar_cloud = self.pack_cloud("sonar/base_link", voxels)
-                        self.pointcloud_pub.publish(sonar_cloud)
+                    # Publish point cloud
+                    sonar_cloud = self.pack_cloud("saabmarine/sonar_link", voxels)
+                    self.pointcloud_pub.publish(sonar_cloud)
 
-                    elif msg_type == "BitmapImageGreyscale8":
-                        print(msg_type)
-                        # Intensity image as 8UC1
-                        img_list = [] 
-                        for y in range(msg_obj.height-1, -1, -1): 
-                            for x in range(msg_obj.width):
-                                pixel_value = msg_obj.image_pixel_data[y * msg_obj.width + x]
-                                # f.write(f"{pixel_value} ".encode())
-                                img_list.append(pixel_value)
-                        img_np = np.array(img_list, dtype=np.uint8).reshape((msg_obj.height, msg_obj.width))
-                        
-                        msg = Image()
-                        msg.header.stamp = self.get_clock().now().to_msg()
-                        msg.header.frame_id = "sonar/base_link"
-                        msg.height = msg_obj.height
-                        msg.width = msg_obj.width
-                        msg.encoding = "8UC1"
-                        msg.is_bigendian = False
-                        msg.step = img_np.strides[0]
-                        msg.data = img_np.tobytes()
-                        self.intensity_pub.publish(msg)
-                except Exception as e:
-                    self.get_logger().error(f"Failed to parse/publish sonar data: {e}")
+                elif msg_type == "BitmapImageGreyscale8":
+                    print(msg_type)
+                    # Intensity image as 8UC1
+                    img_list = [] 
+                    for y in range(msg_obj.height-1, -1, -1): 
+                        for x in range(msg_obj.width):
+                            pixel_value = msg_obj.image_pixel_data[y * msg_obj.width + x]
+                            # f.write(f"{pixel_value} ".encode())
+                            img_list.append(pixel_value)
+                    img_np = np.array(img_list, dtype=np.uint8).reshape((msg_obj.height, msg_obj.width))
+                    
+                    msg = Image()
+                    msg.header.stamp = self.get_clock().now().to_msg()
+                    msg.header.frame_id = "saabmarine/sonarlink"
+                    msg.height = msg_obj.height
+                    msg.width = msg_obj.width
+                    msg.encoding = "8UC1"
+                    msg.is_bigendian = False
+                    msg.step = img_np.strides[0]
+                    msg.data = img_np.tobytes()
+                    self.intensity_pub.publish(msg)
+            except Exception as e:
+                self.get_logger().error(f"Failed to parse/publish sonar data: {e}")
         except Exception as e:
             self.get_logger().error(f"UDP listener error: {e}")
 
