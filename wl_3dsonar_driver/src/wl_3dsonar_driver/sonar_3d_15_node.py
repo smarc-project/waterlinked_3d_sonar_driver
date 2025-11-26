@@ -70,7 +70,7 @@ class Sonar3D15Node(Node):
 
         # Initial configuration
         self.configure_sonar()
-        #Current settings is for unicast. Need some cleaning and also add a flag to do multicast
+        #Current settings is for unicast. Need some cleaning and also add a flag to do multicast. Coming sooon.
         interface_ip = netifaces.ifaddresses('eth0')[netifaces.AF_INET][0]['addr']
         multicast_group = self.multicast_group
         port = self.multicast_port
