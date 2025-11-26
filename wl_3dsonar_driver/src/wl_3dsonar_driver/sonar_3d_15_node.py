@@ -5,6 +5,7 @@ import struct
 import os
 import sys
 import numpy as np
+import netifaces
 
 # sys.path.append(os.path.join(os.path.dirname(__file__)))
 # from wl_api.sonar_3d_15_protocol_pb2 import RangeImage, BitmapImageGreyscale8
@@ -45,12 +46,12 @@ class Sonar3D15Node(Node):
         self.declare_parameters(
             namespace='',
             parameters=[
-                ('sonar_ip', ''),
+                ('sonar_ip', '192.168.2.190'),#192.168.194.96#192.168.2.190
                 ('speed_of_sound', 1480),
-                ('acoustics_enabled', False),
+                ('acoustics_enabled', True),
                 ('multicast_group', '224.0.0.96'),
                 ('multicast_port', 4747),
-                ('filter_ip', ''),
+                ('filter_ip', '192.168.2.190'),
             ]
         )
         self.get_logger().info('Sonar 3D-15 ROS2 node started.')
@@ -61,24 +62,35 @@ class Sonar3D15Node(Node):
         self.multicast_port = self.get_parameter('multicast_port').get_parameter_value().integer_value
         self.filter_ip = self.get_parameter('filter_ip').get_parameter_value().string_value
 
-        MULTICAST_GROUP = '224.0.0.5' # Used when everything is in brovnet
-        # MULTICAST_GROUP = '224.0.0.96'  # Used when the sonar is connected to supernet and the laptop as well over wifi 
+        # MULTICAST_GROUP = '224.0.0.5' # Used when everything is in brovnet
+        MULTICAST_GROUP = '224.0.0.96'  # Used when the sonar is connected to supernet and the laptop as well over wifi 
         
         # Register parameter change callback
         self.add_on_set_parameters_callback(self.parameter_callback)
 
         # Initial configuration
         self.configure_sonar()
-
+        #Current settings is for unicast. Need some cleaning and also add a flag to do multicast
+        interface_ip = netifaces.ifaddresses('eth0')[netifaces.AF_INET][0]['addr']
         multicast_group = self.multicast_group
         port = self.multicast_port
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(('', port))
-        group = socket.inet_aton(multicast_group)
-        mreq = struct.pack('4sL', group, socket.INADDR_ANY) 
+        #self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)#multicast
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)#unicast
+        #self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)#multicast
+        #self.sock.bind(('', port))#multicast
+        self.sock.bind((interface_ip, 6666))
+        #group = socket.inet_aton(multicast_group)#multicast
+        #If connected via ethernet
+        #interface_ip = netifaces.ifaddresses('eth0')[netifaces.AF_INET][0]['addr']
+
+        #If connected via wifi
+        
+        
+        #mreq = struct.pack('4s4s', group, socket.inet_aton(interface_ip))#multicast
+        #mreq = struct.pack('4sL', group, socket.INADDR_ANY) 
+        #print(socket.INADDR_ANY)
         # mreq = struct.pack('4s4s', group, socket.inet_aton('192.168.32.33'))
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        #self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)#multicast
         self.get_logger().info(f"Listening for Sonar 3D-15 UDP packets on {multicast_group}:{port}...")
 
         if self.filter_ip:
@@ -175,7 +187,7 @@ class Sonar3D15Node(Node):
 
                     msg = Image()
                     msg.header.stamp = self.get_clock().now().to_msg()
-                    msg.header.frame_id = "saabmarine/sonar_link"
+                    msg.header.frame_id = "3d_link"
                     msg.height = msg_obj.height
                     msg.width = msg_obj.width
                     msg.encoding = "32FC1"
@@ -185,7 +197,7 @@ class Sonar3D15Node(Node):
                     self.image_pub.publish(msg)
 
                     # Publish point cloud
-                    sonar_cloud = self.pack_cloud("saabmarine/sonar_link", voxels)
+                    sonar_cloud = self.pack_cloud("3d_link", voxels)
                     self.pointcloud_pub.publish(sonar_cloud)
 
                 elif msg_type == "BitmapImageGreyscale8":
