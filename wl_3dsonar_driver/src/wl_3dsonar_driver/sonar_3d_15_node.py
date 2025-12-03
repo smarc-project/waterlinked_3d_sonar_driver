@@ -49,17 +49,21 @@ class Sonar3D15Node(Node):
                 ('sonar_ip', '192.168.2.190'),#192.168.194.96#192.168.2.190
                 ('speed_of_sound', 1480),
                 ('acoustics_enabled', True),
+                ('multicast_or_unicast', 'unicast'),
                 ('multicast_group', '224.0.0.96'),
                 ('multicast_port', 4747),
+                ('unicast_port', 6666),#defined in the GUI of waterlink
                 ('filter_ip', '192.168.2.190'),
             ]
         )
         self.get_logger().info('Sonar 3D-15 ROS2 node started.')
         self.sonar_ip = self.get_parameter('sonar_ip').get_parameter_value().string_value
         self.speed_of_sound = self.get_parameter('speed_of_sound').get_parameter_value().integer_value
+        self.multicast_or_unicast = self.get_parameter('multicast_or_unicast').get_parameter_value().string_value
         self.acoustics_enabled = self.get_parameter('acoustics_enabled').get_parameter_value().bool_value
         self.multicast_group = self.get_parameter('multicast_group').get_parameter_value().string_value
         self.multicast_port = self.get_parameter('multicast_port').get_parameter_value().integer_value
+        self.unicast_port = self.get_parameter('unicast_port').get_parameter_value().integer_value
         self.filter_ip = self.get_parameter('filter_ip').get_parameter_value().string_value
 
         # MULTICAST_GROUP = '224.0.0.5' # Used when everything is in brovnet
@@ -70,28 +74,22 @@ class Sonar3D15Node(Node):
 
         # Initial configuration
         self.configure_sonar()
-        #Current settings is for unicast. Need some cleaning and also add a flag to do multicast. Coming sooon.
-        interface_ip = netifaces.ifaddresses('eth0')[netifaces.AF_INET][0]['addr']
+        interface_ip = netifaces.ifaddresses('eth0')[netifaces.AF_INET][0]['addr']#gets the IP of this computer
         multicast_group = self.multicast_group
         port = self.multicast_port
-        #self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)#multicast
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)#unicast
-        #self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)#multicast
-        #self.sock.bind(('', port))#multicast
-        self.sock.bind((interface_ip, 6666))
-        #group = socket.inet_aton(multicast_group)#multicast
-        #If connected via ethernet
-        #interface_ip = netifaces.ifaddresses('eth0')[netifaces.AF_INET][0]['addr']
-
-        #If connected via wifi
+        if self.multicast_or_unicast == 'unicast':
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.bind((interface_ip, self.unicast_port))
+            self.get_logger().info(f"Listening for Sonar 3D-15 UDP packets on UNICAST:{self.unicast_port}...")
+        elif self.multicast_or_unicast == 'multicast':
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.bind(('', port))
+            group = socket.inet_aton(multicast_group)
+            mreq = struct.pack('4s4s', group, socket.inet_aton(interface_ip))
+            self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            self.get_logger().info(f"Listening for Sonar 3D-15 UDP packets on MULTICAST: {multicast_group}:{port}...")
         
-        
-        #mreq = struct.pack('4s4s', group, socket.inet_aton(interface_ip))#multicast
-        #mreq = struct.pack('4sL', group, socket.INADDR_ANY) 
-        #print(socket.INADDR_ANY)
-        # mreq = struct.pack('4s4s', group, socket.inet_aton('192.168.32.33'))
-        #self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)#multicast
-        self.get_logger().info(f"Listening for Sonar 3D-15 UDP packets on {multicast_group}:{port}...")
 
         if self.filter_ip:
             self.get_logger().info(f"Filtering packets from IP: {self.filter_ip}")
@@ -99,8 +97,6 @@ class Sonar3D15Node(Node):
         # Start UDP listening thread
         sample_time = 0.001          # sample time in seconds
         self.create_timer(sample_time, self.udp_listener)
-        # self.udp_thread = threading.Thread(target=self.udp_listener, daemon=True)
-        # self.udp_thread.start()
 
         self.image_pub = self.create_publisher(Image, 'sonar/depth_image', 10)
         self.intensity_pub = self.create_publisher(Image, 'sonar/intensity_image', 10)
@@ -172,15 +168,15 @@ class Sonar3D15Node(Node):
             data, addr = self.sock.recvfrom(buffer_size)
             if self.filter_ip and addr[0] != self.filter_ip:
                 return
-            self.get_logger().debug(f"Received {len(data)} bytes from {addr}")
+            #self.get_logger().debug(f"Received {len(data)} bytes from {addr}")
             try:
-                print("000000000000000")
+                #print("000000000000000")
                 result = handle_packet(data)
                 if result is None:
                     return
                 msg_type, msg_obj, voxels = result
                 if msg_type == "RangeImage":
-                    print(msg_type)
+                    #print(msg_type)
                     # Convert to numpy array (float32)
                     img_np = np.array(msg_obj.image_pixel_data, dtype=np.float32).reshape((msg_obj.height, msg_obj.width))
                     img = np.flip(img_np, 0)
@@ -201,7 +197,7 @@ class Sonar3D15Node(Node):
                     self.pointcloud_pub.publish(sonar_cloud)
 
                 elif msg_type == "BitmapImageGreyscale8":
-                    print(msg_type)
+                    #print(msg_type)
                     # Intensity image as 8UC1
                     img_list = [] 
                     for y in range(msg_obj.height-1, -1, -1): 
