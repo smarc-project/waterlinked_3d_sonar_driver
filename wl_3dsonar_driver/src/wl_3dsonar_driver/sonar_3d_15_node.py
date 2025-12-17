@@ -10,6 +10,7 @@ import numpy as np
 # from wl_api.sonar_3d_15_protocol_pb2 import RangeImage, BitmapImageGreyscale8
 from wl_api.interface_sonar_api import set_speed, set_acoustics
 from wl_api.inspect_sonar_data import handle_packet
+import netifaces
 
 import rclpy
 from rclpy.node import Node
@@ -51,6 +52,7 @@ class Sonar3D15Node(Node):
                 ('multicast_group', '224.0.0.96'),
                 ('multicast_port', 4747),
                 ('filter_ip', ''),
+                ('multicast', False),
             ]
         )
         self.get_logger().info('Sonar 3D-15 ROS2 node started.')
@@ -60,26 +62,31 @@ class Sonar3D15Node(Node):
         self.multicast_group = self.get_parameter('multicast_group').get_parameter_value().string_value
         self.multicast_port = self.get_parameter('multicast_port').get_parameter_value().integer_value
         self.filter_ip = self.get_parameter('filter_ip').get_parameter_value().string_value
+        self.multicast = self.get_parameter('multicast').get_parameter_value().string_value
 
-        MULTICAST_GROUP = '224.0.0.5' # Used when everything is in brovnet
-        # MULTICAST_GROUP = '224.0.0.96'  # Used when the sonar is connected to supernet and the laptop as well over wifi 
-        
         # Register parameter change callback
         self.add_on_set_parameters_callback(self.parameter_callback)
 
         # Initial configuration
         self.configure_sonar()
 
-        multicast_group = self.multicast_group
-        port = self.multicast_port
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(('', port))
-        group = socket.inet_aton(multicast_group)
-        mreq = struct.pack('4sL', group, socket.INADDR_ANY) 
-        # mreq = struct.pack('4s4s', group, socket.inet_aton('192.168.32.33'))
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        self.get_logger().info(f"Listening for Sonar 3D-15 UDP packets on {multicast_group}:{port}...")
+        # # Multicast socket setup
+        if self.multicast:
+            multicast_group = self.multicast_group
+            port = self.multicast_port
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.bind(('', port))
+            group = socket.inet_aton(multicast_group)
+            mreq = struct.pack('4sL', group, socket.INADDR_ANY) 
+            self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            self.get_logger().info(f"Listening for Sonar 3D-15 UDP packets on {multicast_group}:{port}...")
+        
+        # Unicast socket setup
+        else:
+            interface_ip = netifaces.ifaddresses('enp62s0')[netifaces.AF_INET][0]['addr']
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)#unicast
+            self.sock.bind((interface_ip, 6666))
 
         if self.filter_ip:
             self.get_logger().info(f"Filtering packets from IP: {self.filter_ip}")
@@ -159,6 +166,7 @@ class Sonar3D15Node(Node):
             # while rclpy.ok():
             data, addr = self.sock.recvfrom(buffer_size)
             if self.filter_ip and addr[0] != self.filter_ip:
+                self.get_logger().info(f"Filtering data from from {addr}")
                 return
             self.get_logger().debug(f"Received {len(data)} bytes from {addr}")
             try:
